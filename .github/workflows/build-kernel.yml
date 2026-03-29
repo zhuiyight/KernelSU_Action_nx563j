@@ -14,7 +14,6 @@ jobs:
           echo "KERNEL_SOURCE=https://github.com/LineageOS/android_kernel_nubia_sdm845" >> $GITHUB_ENV
           echo "KERNEL_SOURCE_BRANCH=lineage-22.2" >> $GITHUB_ENV
           echo "TARGET_ARCH=arm64" >> $GITHUB_ENV
-          echo "KERNEL_FILE=Image.gz-dtb" >> $GITHUB_ENV
           echo "CLANG_VERSION=r487747c" >> $GITHUB_ENV
           echo "BUILD_EXTRA_COMMAND=LD=ld.lld LLVM=1 LLVM_IAS=1" >> $GITHUB_ENV
           echo "DEVICE=nx616j" >> $GITHUB_ENV
@@ -46,9 +45,10 @@ jobs:
       - name: Merge defconfig
         run: |
           cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+          mkdir -p arch/arm64/configs/
           cat arch/arm64/configs/vendor/nubia/sdm845_defconfig \
               arch/arm64/configs/vendor/nubia/nx616j.config \
-              > lineage_nx616j_defconfig
+              > arch/arm64/configs/lineage_nx616j_defconfig
 
       - name: Build kernel
         run: |
@@ -57,15 +57,15 @@ jobs:
           export KBUILD_BUILD_HOST=GitHub-Action
           export KBUILD_BUILD_USER=$(echo ${{ github.actor }} | tr A-Z a-z)
 
-          make -j$(nproc) ARCH=${{ env.TARGET_ARCH }} CC=clang \
+          make -j$(nproc) O=out ARCH=${{ env.TARGET_ARCH }} CC=clang \
             ${{ env.BUILD_EXTRA_COMMAND }} \
             lineage_nx616j_defconfig
 
-          make -j$(nproc) ARCH=${{ env.TARGET_ARCH }} CC=clang \
+          make -j$(nproc) O=out ARCH=${{ env.TARGET_ARCH }} CC=clang \
             ${{ env.BUILD_EXTRA_COMMAND }}
 
-      - name: Upload kernel
+      - name: Upload kernel Image.gz-dtb
         uses: actions/upload-artifact@v4
         with:
-          name: kernel-nx616j-lineage-22.2-${{ env.BUILD_TIME }}
-          path: arch/arm64/boot/Image.gz-dtb
+          name: kernel-nx616j-lineage22.2-${{ env.BUILD_TIME }}
+          path: kernel_workspace/android-kernel/out/arch/arm64/boot/Image.gz-dtb
