@@ -7,74 +7,68 @@ jobs:
     name: Build Kernel by ${{ github.actor }}
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4  # 升级 v4
+      - uses: actions/checkout@v4
 
-    - name: Setup Configuration
-      run: |
-        echo "KERNEL_SOURCE=$(cat config.env | grep "KERNEL_SOURCE" | head -n 1 | cut -d "=" -f 2)" >> $GITHUB_ENV
-        echo "KERNEL_SOURCE_BRANCH=$(cat config.env | grep "KERNEL_SOURCE_BRANCH" | head -n 1 | cut -d "=" -f 2)" >> $GITHUB_ENV
-        echo "KERNEL_DEFCONFIG=$(cat config.env | grep "KERNEL_DEFCONFIG" | head -n 1 | cut -d "=" -f 2)" >> $GITHUB_ENV
-        echo "TARGET_ARCH=$(cat config.env | grep "TARGET_ARCH" | head -n 1 | cut -d "=" -f 2)" >> $GITHUB_ENV
-        echo "KERNEL_FILE=$(cat config.env | grep "KERNEL_FILE" | head -n 1 | cut -d "=" -f 2)" >> $GITHUB_ENV
-        echo "CLANG_VERSION=$(cat config.env | grep "CLANG_VERSION" | head -n 1 | cut -d "=" -f 2)" >> $GITHUB_ENV
-        echo "BUILD_EXTRA_COMMAND=$(cat config.env | grep "EXTRA_BUILD_COMMAND" | head -n 1 | cut -d ":" -f 2)" >> $GITHUB_ENV
+      - name: Setup Configuration
+        run: |
+          echo "KERNEL_SOURCE=https://github.com/LineageOS/android_kernel_nubia_sdm845" >> $GITHUB_ENV
+          echo "KERNEL_SOURCE_BRANCH=lineage-22.2" >> $GITHUB_ENV
+          echo "TARGET_ARCH=arm64" >> $GITHUB_ENV
+          echo "KERNEL_FILE=Image.gz-dtb" >> $GITHUB_ENV
+          echo "CLANG_VERSION=r487747c" >> $GITHUB_ENV
+          echo "BUILD_EXTRA_COMMAND=LD=ld.lld LLVM=1 LLVM_IAS=1" >> $GITHUB_ENV
+          echo "DEVICE=nx616j" >> $GITHUB_ENV
+          echo "BUILD_TIME=$(TZ=Asia/Shanghai date "+%Y%m%d%H%M")" >> $GITHUB_ENV
 
-    - name: Setup build kernel environment
-      run: |
-        echo "BUILD_TIME=$(TZ=Asia/Shanghai date "+%Y%m%d%H%M")" >> $GITHUB_ENV
-        echo "DEVICE=$(echo ${{ env.KERNEL_DEFCONFIG }} | sed 's!vendor/!!;s/_defconfig//;s/_user//;s/-perf//')" >> $GITHUB_ENV
-        sudo apt-get update
-        sudo apt-get install git ccache automake flex lzop bison gperf build-essential zip curl zlib1g-dev g++-multilib libxml2-utils bzip2 libbz2-dev libbz2-1.0 libghc-bzlib-dev squashfs-tools pngcrush schedtool dpkg-dev liblz4-tool make optipng maven libssl-dev pwgen libswitch-perl policycoreutils minicom libxml-sax-base-perl libxml-simple-perl bc libc6-dev-i386 lib32ncurses5-dev libx11-dev lib32z-dev libgl1-mesa-dev xsltproc unzip device-tree-compiler python2 python3 default-jdk -y
-        mkdir -p $GITHUB_WORKSPACE/kernel_workspace
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git ccache automake flex lzop bison gperf build-essential zip curl \
+            zlib1g-dev g++-multilib libxml2-utils bzip2 libbz2-dev squashfs-tools liblz4-tool make \
+            libssl-dev bc libc6-dev-i386 lib32ncurses5-dev libx11-dev lib32z-dev libgl1-mesa-dev \
+            xsltproc unzip device-tree-compiler python2 python3
+          mkdir -p $GITHUB_WORKSPACE/kernel_workspace
 
-    - name: Download Clang-aosp Gcc-aosp Gcc32-aosp
-      run: |
-        cd $GITHUB_WORKSPACE/kernel_workspace
-        mkdir clang-aosp
-        wget https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main-kernel-build-2023/clang-${{ env.CLANG_VERSION }}.tar.gz
-        tar -C clang-aosp/ -zxvf clang-${{ env.CLANG_VERSION }}.tar.gz
-        
-        mkdir gcc-aosp
-        wget https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/+archive/refs/tags/android-12.1.0_r27.tar.gz -O gcc-aosp.tar.gz
-        tar -C gcc-aosp/ -zxvf gcc-aosp.tar.gz
-        
-        mkdir gcc32-aosp
-        wget https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9/+archive/refs/tags/android-12.1.0_r27.tar.gz -O gcc32-aosp.tar.gz
-        tar -C gcc32-aosp/ -zxvf gcc32-aosp.tar.gz
+      - name: Download Clang
+        run: |
+          cd $GITHUB_WORKSPACE/kernel_workspace
+          mkdir clang-aosp
+          wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main-kernel-build-2023/clang-${{ env.CLANG_VERSION }}.tar.gz
+          tar -C clang-aosp/ -zxf clang-${{ env.CLANG_VERSION }}.tar.gz
 
-    - name: Download kernel source
-      run: |
-        cd $GITHUB_WORKSPACE/kernel_workspace
-        git clone ${{ env.KERNEL_SOURCE }} -b ${{ env.KERNEL_SOURCE_BRANCH }} android-kernel --depth=1
+      - name: Clone kernel source
+        run: |
+          cd $GITHUB_WORKSPACE/kernel_workspace
+          git clone ${{ env.KERNEL_SOURCE }} -b ${{ env.KERNEL_SOURCE_BRANCH }} android-kernel --depth=1
 
-    - name: Build kernel
-      run: |
-        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
-        export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-aosp/bin:$PATH
-        export KBUILD_BUILD_HOST=Github-Action
-        export KBUILD_BUILD_USER=$(echo ${{ github.actor }} | tr A-Z a-z)
-        
-        make -j$(nproc --all) O=out \
-          ARCH=${{ env.TARGET_ARCH }} \
-          CLANG_TRIPLE=aarch64-linux-gnu- \
-          CROSS_COMPILE=$GITHUB_WORKSPACE/kernel_workspace/gcc-aosp/bin/aarch64-linux-android- \
-          CROSS_COMPILE_ARM32=$GITHUB_WORKSPACE/kernel_workspace/gcc32-aosp/bin/arm-linux-androideabi- \
-          CROSS_COMPILE_COMPAT=$GITHUB_WORKSPACE/kernel_workspace/gcc32-aosp/bin/arm-linux-androideabi- \
-          CC=clang \
-          ${{ env.BUILD_EXTRA_COMMAND }} \
-          ${{ env.KERNEL_DEFCONFIG }}
-        
-        make -j$(nproc --all) O=out \
-          ARCH=${{ env.TARGET_ARCH }} \
-          CLANG_TRIPLE=aarch64-linux-gnu- \
-          CROSS_COMPILE=$GITHUB_WORKSPACE/kernel_workspace/gcc-aosp/bin/aarch64-linux-android- \
-          CROSS_COMPILE_ARM32=$GITHUB_WORKSPACE/kernel_workspace/gcc32-aosp/bin/arm-linux-androideabi- \
-          CROSS_COMPILE_COMPAT=$GITHUB_WORKSPACE/kernel_workspace/gcc32-aosp/bin/arm-linux-androideabi- \
-          CC=clang \
-          ${{ env.BUILD_EXTRA_COMMAND }}
+      - name: Merge sdm845_defconfig + nx616j.config
+        run: |
+          cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+          mkdir -p out/arch/arm64/configs/
+          cat arch/arm64/configs/vendor/nubia/sdm845_defconfig \
+              arch/arm64/configs/vendor/nubia/nx616j.config \
+              > out/merged_defconfig
 
-    - name: Upload compiled kernel
-      uses: actions/upload-artifact@v4  # 升级 v4
-      with:
-        name: kernel-${{ env.DEVICE }}-${{ env.BUILD_TIME }}
-        path: kernel_workspace/android-kernel/out/arch/${{ env.TARGET_ARCH }}/boot/${{ env.KERNEL_FILE }}
+      - name: Build kernel
+        run: |
+          cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+          export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-aosp/bin:$PATH
+          export KBUILD_BUILD_HOST=Github-Action
+          export KBUILD_BUILD_USER=$(echo ${{ github.actor }} | tr A-Z a-z)
+
+          make -j$(nproc) O=out \
+            ARCH=${{ env.TARGET_ARCH }} \
+            CC=clang \
+            ${{ env.BUILD_EXTRA_COMMAND }} \
+            merged_defconfig
+
+          make -j$(nproc) O=out \
+            ARCH=${{ env.TARGET_ARCH }} \
+            CC=clang \
+            ${{ env.BUILD_EXTRA_COMMAND }}
+
+      - name: Upload kernel Image.gz-dtb
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-nx616j-lineage22.2-${{ env.BUILD_TIME }}
+          path: kernel_workspace/android-kernel/out/arch/arm64/boot/Image.gz-dtb
