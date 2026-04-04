@@ -30,10 +30,10 @@ jobs:
       uses: actions/cache@v4
       with:
         path: ~/.ccache
-        key: kernel-sdm845-v4-${{ github.ref }}-${{ github.sha }}
+        key: kernel-sdm845-v5-${{ github.ref }}-${{ github.sha }}
         restore-keys: |
-          kernel-sdm845-v4-${{ github.ref }}-
-          kernel-sdm845-v4-
+          kernel-sdm845-v5-${{ github.ref }}-
+          kernel-sdm845-v5-
 
     - name: 下载 Clang r536225
       run: |
@@ -58,45 +58,36 @@ jobs:
         export USE_CCACHE=1
         export CCACHE_DIR=~/.ccache
 
-        # 定义编译参数 (针对新版 Clang 启用完整 LLVM 工具链)
-        MAKE_ARGS="ARCH=arm64 \
-                   O=out \
-                   CC='ccache clang' \
-                   LD=ld.lld \
-                   AR=llvm-ar \
-                   NM=llvm-nm \
-                   OBJCOPY=llvm-objcopy \
-                   OBJDUMP=llvm-objdump \
-                   STRIP=llvm-strip \
-                   LLVM=1 \
-                   LLVM_IAS=1 \
-                   CLANG_Triple=aarch64-linux-gnu- \
-                   CROSS_COMPILE=aarch64-linux-gnu- \
-                   CROSS_COMPILE_ARM32=arm-linux-gnueabi-"
+        # 核心编译参数 (单行定义避免转义字符报错)
+        # 注意: CC='ccache clang' 使用单引号包裹 ccache 提高编译速度
+        ARGS="ARCH=arm64 O=out CC='ccache clang' LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-"
 
-        # 1. 生成基础配置
-        make $MAKE_ARGS vendor/nubia/sdm845_defconfig
+        # 1. 生成基础配置 (sdm845_defconfig)
+        make $ARGS vendor/nubia/sdm845_defconfig
 
-        # 2. 合并 nx616j 配置片段
+        # 2. 合并 nx616j.config 片段
+        # 路径: arch/arm64/configs/vendor/nubia/nx616j.config
         if [ -f arch/arm64/configs/vendor/nubia/nx616j.config ]; then
           cp arch/arm64/configs/vendor/nubia/nx616j.config out/.config_fragment
-          make $MAKE_ARGS KCONFIG_ALLCONFIG=out/.config_fragment alldefconfig
+          make $ARGS KCONFIG_ALLCONFIG=out/.config_fragment alldefconfig
+          echo "Success: Combined sdm845_defconfig with nx616j.config"
         else
-          echo "Warning: nx616j.config not found, skipping fragment merge."
+          echo "Warning: nx616j.config not found, using base sdm845_defconfig only."
         fi
 
         # 3. 执行正式编译
-        make -j$(nproc --all) $MAKE_ARGS
+        make -j$(nproc --all) $ARGS
 
     - name: 检查并打包产物
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel/out/arch/arm64/boot/
-        # 搜索常见的内核输出文件名
+        # 定义可能生成的内核文件名
         FILES="Image.gz Image.gz-dtb Image Image-dtb dtbo.img"
         FOUND=false
         for f in $FILES; do
           if [ -f "$f" ]; then
             echo "Found kernel file: $f"
+            # 使用 -j 参数不包含目录结构，直接把文件放进 zip
             zip -j "Kernel_NX616J_${{ github.run_id }}.zip" "$f"
             FOUND=true
           fi
