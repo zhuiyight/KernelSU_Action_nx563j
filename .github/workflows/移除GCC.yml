@@ -18,17 +18,22 @@ jobs:
     - name: 安装编译依赖
       run: |
         sudo apt-get update
-        sudo apt-get install -y git ccache automake flex lzop bison gperf build-essential zip curl zlib1g-dev g++-multilib libxml2-utils bzip2 libbz2-dev libbz2-1.0 libghc-bzlib-dev squashfs-tools pngcrush schedtool dpkg-dev liblz4-tool make optipng maven libssl-dev pwgen libswitch-perl policycoreutils minicom libxml-sax-base-perl libxml-simple-perl bc libc6-dev-i386 lib32ncurses5-dev libx11-dev lib32z-dev libgl1-mesa-dev xsltproc unzip device-tree-compiler python3 default-jdk
+        sudo apt-get install -y git ccache automake flex lzop bison gperf build-essential zip curl \
+          zlib1g-dev g++-multilib libxml2-utils bzip2 libbz2-dev libbz2-1.0 libghc-bzlib-dev \
+          squashfs-tools pngcrush schedtool dpkg-dev liblz4-tool make optipng maven libssl-dev \
+          pwgen libswitch-perl policycoreutils minicom libxml-sax-base-perl libxml-simple-perl \
+          bc libc6-dev-i386 libx11-dev libgl1-mesa-dev xsltproc unzip device-tree-compiler \
+          python3 default-jdk
         mkdir -p $GITHUB_WORKSPACE/kernel_workspace
 
     - name: 设置 ccache 缓存
       uses: actions/cache@v4
       with:
         path: ~/.ccache
-        key: kernel-sdm845-v2-${{ github.ref }}-${{ github.sha }}
+        key: kernel-sdm845-v4-${{ github.ref }}-${{ github.sha }}
         restore-keys: |
-          kernel-sdm845-v2-${{ github.ref }}-
-          kernel-sdm845-v2-
+          kernel-sdm845-v4-${{ github.ref }}-
+          kernel-sdm845-v4-
 
     - name: 下载 Clang r536225
       run: |
@@ -53,7 +58,7 @@ jobs:
         export USE_CCACHE=1
         export CCACHE_DIR=~/.ccache
 
-        # 定义编译参数
+        # 定义编译参数 (针对新版 Clang 启用完整 LLVM 工具链)
         MAKE_ARGS="ARCH=arm64 \
                    O=out \
                    CC='ccache clang' \
@@ -65,24 +70,28 @@ jobs:
                    STRIP=llvm-strip \
                    LLVM=1 \
                    LLVM_IAS=1 \
-                   CLANG_TRIPLE=aarch64-linux-gnu- \
+                   CLANG_Triple=aarch64-linux-gnu- \
                    CROSS_COMPILE=aarch64-linux-gnu- \
                    CROSS_COMPILE_ARM32=arm-linux-gnueabi-"
 
-        # 1. 生成基础配置 (sdm845_defconfig)
+        # 1. 生成基础配置
         make $MAKE_ARGS vendor/nubia/sdm845_defconfig
 
-        # 2. 合并 nx616j.config (使用 KCONFIG_ALLCONFIG 方式更稳定)
-        # 确保 nx616j.config 存在于源码路径
-        cp arch/arm64/configs/vendor/nubia/nx616j.config out/.config_fragment
-        make $MAKE_ARGS KCONFIG_ALLCONFIG=out/.config_fragment alldefconfig
+        # 2. 合并 nx616j 配置片段
+        if [ -f arch/arm64/configs/vendor/nubia/nx616j.config ]; then
+          cp arch/arm64/configs/vendor/nubia/nx616j.config out/.config_fragment
+          make $MAKE_ARGS KCONFIG_ALLCONFIG=out/.config_fragment alldefconfig
+        else
+          echo "Warning: nx616j.config not found, skipping fragment merge."
+        fi
 
-        # 3. 正式编译 (使用 nproc 自动分配核心)
-        make -j$(nproc --all) $MAKE_ARGS || (tail -n 100 out/build.log && exit 1)
+        # 3. 执行正式编译
+        make -j$(nproc --all) $MAKE_ARGS
 
     - name: 检查并打包产物
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel/out/arch/arm64/boot/
+        # 搜索常见的内核输出文件名
         FILES="Image.gz Image.gz-dtb Image Image-dtb dtbo.img"
         FOUND=false
         for f in $FILES; do
@@ -94,7 +103,7 @@ jobs:
         done
         
         if [ "$FOUND" = false ]; then
-          echo "Error: No kernel image found!" && exit 1
+          echo "Error: No kernel image found in out directory!" && exit 1
         fi
 
     - name: 上传产物 (v4)
