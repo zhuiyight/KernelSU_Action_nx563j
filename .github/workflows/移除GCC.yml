@@ -1,4 +1,4 @@
-name: Build Kernel SDM845 Optimized
+name: Build Kernel SDM845 GCC-Clang
 on:
   workflow_dispatch:
 
@@ -26,20 +26,30 @@ jobs:
           python3 default-jdk
         mkdir -p $GITHUB_WORKSPACE/kernel_workspace
 
-    - name: 缓存 Clang
-      id: cache-clang
+    - name: 缓存工具链
+      id: cache-toolchain
       uses: actions/cache@v4
       with:
-        path: kernel_workspace/clang-aosp
-        key: clang-r536225
+        path: |
+          kernel_workspace/clang-aosp
+          kernel_workspace/gcc-aosp
+          kernel_workspace/gcc32-aosp
+        key: toolchain-sdm845-r536225-v1
 
-    - name: 下载 Clang r536225
-      if: steps.cache-clang.outputs.cache-hit != 'true'
+    - name: 下载 Clang & GCC
+      if: steps.cache-toolchain.outputs.cache-hit != 'true'
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace
-        mkdir -p clang-aosp
+        mkdir -p clang-aosp gcc-aosp gcc32-aosp
+        # 下载 Clang r536225
         wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r536225.tar.gz
         tar -C clang-aosp/ -zxf clang-r536225.tar.gz
+        # 下载 GCC 64位
+        wget -q https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/+archive/refs/tags/android-12.1.0_r27.tar.gz -O gcc-aosp.tar.gz
+        tar -C gcc-aosp/ -zxf gcc-aosp.tar.gz
+        # 下载 GCC 32位
+        wget -q https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9/+archive/refs/tags/android-12.1.0_r27.tar.gz -O gcc32-aosp.tar.gz
+        tar -C gcc32-aosp/ -zxf gcc32-aosp.tar.gz
 
     - name: 下载内核源码 (Lineage-22.2)
       run: |
@@ -50,47 +60,44 @@ jobs:
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
         
-        # 环境变量
+        # 环境变量设置
+        # 注意：这里去除了针对 sched.h 的 sed 修复命令
+        
+        GCC_64=$GITHUB_WORKSPACE/kernel_workspace/gcc-aosp/bin/aarch64-linux-android-
+        GCC_32=$GITHUB_WORKSPACE/kernel_workspace/gcc32-aosp/bin/arm-linux-androideabi-
         export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-aosp/bin:$PATH
         export KBUILD_BUILD_HOST=Github-Action
         export KBUILD_BUILD_USER=${{ github.actor }}
-        
-        # 1. 生成基础配置
-        make ARCH=arm64 O=out \
-          CC=clang \
-          LD=ld.lld \
-          AR=llvm-ar \
-          NM=llvm-nm \
-          OBJCOPY=llvm-objcopy \
-          OBJDUMP=llvm-objdump \
-          STRIP=llvm-strip \
-          LLVM=1 \
-          LLVM_IAS=1 \
-          CLANG_TRIPLE=aarch64-linux-gnu- \
-          CROSS_COMPILE=aarch64-linux-gnu- \
-          CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-          vendor/nubia/sdm845_defconfig
 
+        # 编译参数
+        # CROSS_COMPILE 指向 GCC 64位，用于汇编和部分链接
+        # CC 指向 Clang，用于主要的 C 代码编译
+        MAKE_ARGS="ARCH=arm64 \
+                   O=out \
+                   CC=clang \
+                   LD=ld.lld \
+                   AR=llvm-ar \
+                   NM=llvm-nm \
+                   OBJCOPY=llvm-objcopy \
+                   OBJDUMP=llvm-objdump \
+                   STRIP=llvm-strip \
+                   LLVM=1 \
+                   LLVM_IAS=1 \
+                   CLANG_TRIPLE=aarch64-linux-gnu- \
+                   CROSS_COMPILE=$GCC_64 \
+                   CROSS_COMPILE_ARM32=$GCC_32"
+
+        # 1. 生成基础配置
+        make $MAKE_ARGS vendor/nubia/sdm845_defconfig
+        
         # 2. 合并 nx616j 配置片段
         if [ -f arch/arm64/configs/vendor/nubia/nx616j.config ]; then
           cp arch/arm64/configs/vendor/nubia/nx616j.config out/.config_fragment
-          make ARCH=arm64 O=out CC=clang LD=ld.lld LLVM=1 LLVM_IAS=1 KCONFIG_ALLCONFIG=out/.config_fragment alldefconfig
+          make $MAKE_ARGS KCONFIG_ALLCONFIG=out/.config_fragment alldefconfig
         fi
 
         # 3. 正式编译
-        make -j$(nproc --all) ARCH=arm64 O=out \
-          CC=clang \
-          LD=ld.lld \
-          AR=llvm-ar \
-          NM=llvm-nm \
-          OBJCOPY=llvm-objcopy \
-          OBJDUMP=llvm-objdump \
-          STRIP=llvm-strip \
-          LLVM=1 \
-          LLVM_IAS=1 \
-          CLANG_TRIPLE=aarch64-linux-gnu- \
-          CROSS_COMPILE=aarch64-linux-gnu- \
-          CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+        make -j$(nproc --all) $MAKE_ARGS
 
     - name: 检查并打包产物
       run: |
@@ -108,5 +115,5 @@ jobs:
     - name: 上传产物 (v4)
       uses: actions/upload-artifact@v4
       with:
-        name: Kernel-SDM845-NX616J
+        name: Kernel-SDM845-GCC-Enabled
         path: kernel_workspace/android-kernel/out/arch/arm64/boot/*.zip
