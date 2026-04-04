@@ -26,19 +26,18 @@ jobs:
           python3 default-jdk
         mkdir -p $GITHUB_WORKSPACE/kernel_workspace
 
-    - name: 设置 ccache 缓存
+    - name: 缓存 Clang
+      id: cache-clang
       uses: actions/cache@v4
       with:
-        path: ~/.ccache
-        key: kernel-sdm845-v5-${{ github.ref }}-${{ github.sha }}
-        restore-keys: |
-          kernel-sdm845-v5-${{ github.ref }}-
-          kernel-sdm845-v5-
+        path: kernel_workspace/clang-aosp
+        key: clang-r536225
 
     - name: 下载 Clang r536225
+      if: steps.cache-clang.outputs.cache-hit != 'true'
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace
-        mkdir clang-aosp
+        mkdir -p clang-aosp
         wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r536225.tar.gz
         tar -C clang-aosp/ -zxf clang-r536225.tar.gz
 
@@ -51,51 +50,60 @@ jobs:
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
         
-        # 环境变量准备
+        # 环境变量
         export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-aosp/bin:$PATH
         export KBUILD_BUILD_HOST=Github-Action
         export KBUILD_BUILD_USER=${{ github.actor }}
-        export USE_CCACHE=1
-        export CCACHE_DIR=~/.ccache
+        
+        # 1. 生成基础配置
+        make ARCH=arm64 O=out \
+          CC=clang \
+          LD=ld.lld \
+          AR=llvm-ar \
+          NM=llvm-nm \
+          OBJCOPY=llvm-objcopy \
+          OBJDUMP=llvm-objdump \
+          STRIP=llvm-strip \
+          LLVM=1 \
+          LLVM_IAS=1 \
+          CLANG_TRIPLE=aarch64-linux-gnu- \
+          CROSS_COMPILE=aarch64-linux-gnu- \
+          CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+          vendor/nubia/sdm845_defconfig
 
-        # 核心编译参数 (单行定义避免转义字符报错)
-        # 注意: CC='ccache clang' 使用单引号包裹 ccache 提高编译速度
-        ARGS="ARCH=arm64 O=out CC='ccache clang' LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-"
-
-        # 1. 生成基础配置 (sdm845_defconfig)
-        make $ARGS vendor/nubia/sdm845_defconfig
-
-        # 2. 合并 nx616j.config 片段
-        # 路径: arch/arm64/configs/vendor/nubia/nx616j.config
+        # 2. 合并 nx616j 配置片段
         if [ -f arch/arm64/configs/vendor/nubia/nx616j.config ]; then
           cp arch/arm64/configs/vendor/nubia/nx616j.config out/.config_fragment
-          make $ARGS KCONFIG_ALLCONFIG=out/.config_fragment alldefconfig
-          echo "Success: Combined sdm845_defconfig with nx616j.config"
-        else
-          echo "Warning: nx616j.config not found, using base sdm845_defconfig only."
+          make ARCH=arm64 O=out CC=clang LD=ld.lld LLVM=1 LLVM_IAS=1 KCONFIG_ALLCONFIG=out/.config_fragment alldefconfig
         fi
 
-        # 3. 执行正式编译
-        make -j$(nproc --all) $ARGS
+        # 3. 正式编译
+        make -j$(nproc --all) ARCH=arm64 O=out \
+          CC=clang \
+          LD=ld.lld \
+          AR=llvm-ar \
+          NM=llvm-nm \
+          OBJCOPY=llvm-objcopy \
+          OBJDUMP=llvm-objdump \
+          STRIP=llvm-strip \
+          LLVM=1 \
+          LLVM_IAS=1 \
+          CLANG_TRIPLE=aarch64-linux-gnu- \
+          CROSS_COMPILE=aarch64-linux-gnu- \
+          CROSS_COMPILE_ARM32=arm-linux-gnueabi-
 
     - name: 检查并打包产物
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel/out/arch/arm64/boot/
-        # 定义可能生成的内核文件名
         FILES="Image.gz Image.gz-dtb Image Image-dtb dtbo.img"
         FOUND=false
         for f in $FILES; do
           if [ -f "$f" ]; then
-            echo "Found kernel file: $f"
-            # 使用 -j 参数不包含目录结构，直接把文件放进 zip
             zip -j "Kernel_NX616J_${{ github.run_id }}.zip" "$f"
             FOUND=true
           fi
         done
-        
-        if [ "$FOUND" = false ]; then
-          echo "Error: No kernel image found in out directory!" && exit 1
-        fi
+        [ "$FOUND" = false ] && exit 1 || true
 
     - name: 上传产物 (v4)
       uses: actions/upload-artifact@v4
